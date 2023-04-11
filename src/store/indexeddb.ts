@@ -140,6 +140,7 @@ export class IndexedDBStore extends MemoryStore {
                         u.setPresenceEvent(new MatrixEvent(rawEvent));
                     }
                     this.userModifiedMap[u.userId] = u.getLastModifiedTime();
+
                     this.storeUser(u);
                 });
             });

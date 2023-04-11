@@ -201,6 +201,7 @@ export class RoomState extends TypedEventEmitter<EmittedEvents, EventHandlerMap>
         if (this.summaryJoinedMemberCount !== null) {
             return this.summaryJoinedMemberCount;
         }
+
         if (this.joinedMemberCount === null) {
             this.joinedMemberCount = this.getMembers().reduce((count, m) => {
                 return m.membership === "join" ? count + 1 : count;
@@ -434,8 +435,8 @@ export class RoomState extends TypedEventEmitter<EmittedEvents, EventHandlerMap>
                     event.getContent().displayname =
                         event.getContent().displayname || event.getPrevContent().displayname;
                 }
-
                 const member = this.getOrCreateMember(userId, event);
+
                 member.setMembershipEvent(event, this);
                 this.updateMember(member);
                 this.emit(RoomStateEvent.Members, event, this, member);
@@ -532,6 +533,7 @@ export class RoomState extends TypedEventEmitter<EmittedEvents, EventHandlerMap>
             // add member to members before emitting any events,
             // as event handlers often lookup the member
             this.members[userId] = member;
+
             this.emit(RoomStateEvent.NewMember, event, this, member);
         }
         return member;

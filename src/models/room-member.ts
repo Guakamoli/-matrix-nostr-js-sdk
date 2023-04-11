@@ -22,7 +22,7 @@ import { RoomState } from "./room-state";
 import { logger } from "../logger";
 import { TypedEventEmitter } from "./typed-event-emitter";
 import { EventType } from "../@types/event";
-
+import Events from "../../src/nostr/src/Events";
 export enum RoomMemberEvent {
     Membership = "RoomMember.membership",
     Name = "RoomMember.name",
@@ -375,7 +375,6 @@ export class RoomMember extends TypedEventEmitter<RoomMemberEvent, RoomMemberEve
         allowDirectLinks: boolean,
     ): string | null {
         const rawUrl = this.getMxcAvatarUrl();
-
         if (!rawUrl && !allowDefault) {
             return null;
         }
@@ -391,10 +390,10 @@ export class RoomMember extends TypedEventEmitter<RoomMemberEvent, RoomMemberEve
      * @returns the mxc avatar url
      */
     public getMxcAvatarUrl(): string | undefined {
-        if (this.events.member) {
-            return this.events.member.getDirectionalContent().avatar_url;
-        } else if (this.user) {
+        if (this.user) {
             return this.user.avatarUrl;
+        } else if (this.events.member) {
+            return this.events.member.getDirectionalContent().avatar_url;
         }
     }
 }

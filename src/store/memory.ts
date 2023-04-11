@@ -120,15 +120,17 @@ export class MemoryStore implements IStore {
         }
 
         const user = this.users[member.userId] || new User(member.userId);
-        if (member.name) {
-            user.setDisplayName(member.name);
-            if (member.events.member) {
-                user.setRawDisplayName(member.events.member.getDirectionalContent().displayname);
-            }
-        }
-        if (member.events.member && member.events.member.getContent().avatar_url) {
-            user.setAvatarUrl(member.events.member.getContent().avatar_url);
-        }
+        // change by nostr
+        // only need user.name and user.avatar_url
+        // if (member.name) {
+        //   user.setDisplayName(member.name);
+        //   if (member.events.member) {
+        //     user.setRawDisplayName(member.events.member.getDirectionalContent().displayname);
+        //   }
+        // }
+        // if (member.events.member && member.events.member.getContent().avatar_url) {
+        //   user.setAvatarUrl(member.events.member.getContent().avatar_url);
+        // }
         this.users[user.userId] = user;
     };
 

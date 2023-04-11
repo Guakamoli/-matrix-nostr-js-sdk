@@ -61,6 +61,7 @@ import { IEventsResponse } from "./@types/requests";
 import { UNREAD_THREAD_NOTIFICATIONS } from "./@types/sync";
 import { Feature, ServerSupport } from "./feature";
 import { Crypto } from "./crypto";
+// import { NostrFilter } from '../src/nostr/src/client';
 
 const DEBUG = true;
 
@@ -760,10 +761,10 @@ export class SyncApi {
         // Now start the first incremental sync request: this can also
         // take a while so if we set it going now, we can wait for it
         // to finish while we process our saved sync data.
-        await this.getPushRules();
-        await this.checkLazyLoadStatus();
-        const { filterId, filter } = await this.getFilter();
-        if (!filter) return; // bail, getFilter failed
+        // await this.getPushRules();
+        // await this.checkLazyLoadStatus();
+        // const { filterId, filter } = await this.getFilter();
+        // if (!filter) return; // bail, getFilter failed
 
         // reset the notifications timeline to prepare it to paginate from
         // the current point in time.
@@ -771,31 +772,31 @@ export class SyncApi {
         // /notifications API somehow.
         this.client.resetNotifTimelineSet();
 
-        if (!this.currentSyncRequest) {
-            let firstSyncFilter = filterId;
-            const savedSyncToken = await savedSyncTokenPromise;
+        // if (!this.currentSyncRequest) {
+        //     let firstSyncFilter = filterId;
+        //     const savedSyncToken = await savedSyncTokenPromise;
 
-            if (savedSyncToken) {
-                debuglog("Sending first sync request...");
-            } else {
-                debuglog("Sending initial sync request...");
-                const initialFilter = this.buildDefaultFilter();
-                initialFilter.setDefinition(filter.getDefinition());
-                initialFilter.setTimelineLimit(this.opts.initialSyncLimit!);
-                // Use an inline filter, no point uploading it for a single usage
-                firstSyncFilter = JSON.stringify(initialFilter.getDefinition());
-            }
+        //     if (savedSyncToken) {
+        //         debuglog("Sending first sync request...");
+        //     } else {
+        //         debuglog("Sending initial sync request...");
+        //         const initialFilter = this.buildDefaultFilter();
+        //         initialFilter.setDefinition(filter.getDefinition());
+        //         initialFilter.setTimelineLimit(this.opts.initialSyncLimit!);
+        //         // Use an inline filter, no point uploading it for a single usage
+        //         firstSyncFilter = JSON.stringify(initialFilter.getDefinition());
+        //     }
 
-            // Send this first sync request here so we can then wait for the saved
-            // sync data to finish processing before we process the results of this one.
-            this.currentSyncRequest = this.doSyncRequest({ filter: firstSyncFilter }, savedSyncToken);
-        }
+        //     // Send this first sync request here so we can then wait for the saved
+        //     // sync data to finish processing before we process the results of this one.
+        //     this.currentSyncRequest = this.doSyncRequest({ filter: firstSyncFilter }, savedSyncToken);
+        // }
 
         // Now wait for the saved sync to finish...
         debuglog("Waiting for saved sync before starting sync processing...");
         await this.savedSyncPromise;
         // process the first sync request and continue syncing with the normal filterId
-        return this.doSync({ filter: filterId });
+        return this.doSync({ filter: "1" });
     }
 
     /**
@@ -874,7 +875,12 @@ export class SyncApi {
      * Invoke me to do /sync calls
      */
     private async doSync(syncOptions: ISyncOptions): Promise<void> {
+        // 这里要替换成相应的事件
+        this.updateSyncState(SyncState.Prepared, null);
+        this.client.initGlobalSubscribe();
+        let start = 0;
         while (this.running) {
+            start = Date.now();
             const syncToken = this.client.store.getSyncToken();
 
             let data: ISyncResponse;
@@ -883,6 +889,11 @@ export class SyncApi {
                     this.currentSyncRequest = this.doSyncRequest(syncOptions, syncToken);
                 }
                 data = await this.currentSyncRequest;
+                if (!data) {
+                    this.updateSyncState(SyncState.Syncing, null);
+                    await utils.sleep(1000);
+                    continue;
+                }
             } catch (e) {
                 const abort = await this.onSyncError(<MatrixError>e);
                 if (abort) return;
@@ -928,10 +939,10 @@ export class SyncApi {
             syncEventData.catchingUp = this.catchingUp;
 
             // emit synced events
-            if (!syncOptions.hasSyncedBefore) {
-                this.updateSyncState(SyncState.Prepared, syncEventData);
-                syncOptions.hasSyncedBefore = true;
-            }
+            // if (!syncOptions.hasSyncedBefore) {
+            //   this.updateSyncState(SyncState.Prepared, syncEventData);
+            //   syncOptions.hasSyncedBefore = true;
+            // }
 
             // tell the crypto module to do its processing. It may block (to do a
             // /keys/changes request).
@@ -941,19 +952,22 @@ export class SyncApi {
 
             // keep emitting SYNCING -> SYNCING for clients who want to do bulk updates
             this.updateSyncState(SyncState.Syncing, syncEventData);
-
-            if (this.client.store.wantsSave()) {
-                // We always save the device list (if it's dirty) before saving the sync data:
-                // this means we know the saved device list data is at least as fresh as the
-                // stored sync data which means we don't have to worry that we may have missed
-                // device changes. We can also skip the delay since we're not calling this very
-                // frequently (and we don't really want to delay the sync for it).
-                if (this.syncOpts.crypto) {
-                    await this.syncOpts.crypto.saveDeviceList(0);
-                }
-
-                // tell databases that everything is now in a consistent state and can be saved.
-                this.client.store.save();
+            this.client.store.save(true);
+            // if (this.client.store.wantsSave()) {
+            //   // We always save the device list (if it's dirty) before saving the sync data:
+            //   // this means we know the saved device list data is at least as fresh as the
+            //   // stored sync data which means we don't have to worry that we may have missed
+            //   // device changes. We can also skip the delay since we're not calling this very
+            //   // frequently (and we don't really want to delay the sync for it).
+            //   if (this.syncOpts.crypto) {
+            //     await this.syncOpts.crypto.saveDeviceList(0);
+            //   }
+            //   // tell databases that everything is now in a consistent state and can be saved.
+            //   this.client.store.save();
+            // }
+            const delta = Date.now() - start;
+            if (delta < 300) {
+                await utils.sleep(Math.max(0, 300 - delta));
             }
         }
 
@@ -968,7 +982,9 @@ export class SyncApi {
     }
 
     private doSyncRequest(syncOptions: ISyncOptions, syncToken: string | null): Promise<ISyncResponse> {
-        const qps = this.getSyncParams(syncOptions, syncToken);
+        // const qps = this.getSyncParams(syncOptions, syncToken);
+
+        return Promise.resolve(this.client.getBufferEvent());
         return this.client.http.authedRequest<ISyncResponse>(Method.Get, "/sync", qps as any, undefined, {
             localTimeoutMs: qps.timeout + BUFFER_PERIOD_MS,
             abortSignal: this.abortController?.signal,
@@ -1547,6 +1563,8 @@ export class SyncApi {
      * @returns which resolves once the connection returns
      */
     private startKeepAlives(delay?: number): Promise<boolean> {
+        // change by nostr
+        return Promise.resolve(true);
         if (delay === undefined) {
             delay = 2000 + Math.floor(Math.random() * 5000);
         }
@@ -1657,7 +1675,9 @@ export class SyncApi {
             return [];
         }
         const mapper = this.client.getEventMapper({ decrypt });
-        type TaggedEvent = (IStrippedState | IRoomEvent | IStateEvent | IMinimalEvent) & { room_id?: string };
+        type TaggedEvent = (IStrippedState | IRoomEvent | IStateEvent | IMinimalEvent) & {
+            room_id?: string;
+        };
         return (obj.events as TaggedEvent[]).filter(noUnsafeEventProps).map(function (e) {
             if (room) {
                 e.room_id = room.roomId;

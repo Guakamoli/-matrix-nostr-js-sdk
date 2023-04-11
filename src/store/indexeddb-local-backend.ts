@@ -144,7 +144,7 @@ export class LocalIndexedDBStoreBackend implements IIndexedDBBackend {
      * to open the same database.
      */
     public constructor(private readonly indexedDB: IDBFactory, dbName = "default") {
-        this.dbName = "matrix-js-sdk:" + dbName;
+        this.dbName = "nostr-js-sdk:" + dbName;
         this.syncAccumulator = new SyncAccumulator();
     }
 
