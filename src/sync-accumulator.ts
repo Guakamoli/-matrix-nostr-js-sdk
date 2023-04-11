@@ -41,6 +41,7 @@ export interface IMinimalEvent {
     content: IContent;
     type: EventType | string;
     unsigned?: IUnsigned;
+    origin_server_ts?: number;
 }
 
 export interface IEphemeral {

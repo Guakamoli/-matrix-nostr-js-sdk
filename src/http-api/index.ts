@@ -22,6 +22,7 @@ import * as callbacks from "../realtime-callbacks";
 import { Method } from "./method";
 import { ConnectionError } from "./errors";
 import { parseErrorResponse } from "./utils";
+import { resolve } from "path";
 
 export * from "./interface";
 export * from "./prefix";
@@ -46,6 +47,23 @@ export class MatrixHttpApi<O extends IHttpOpts> extends FetchHttpApi<O> {
      *    opts.onlyContentUri.  Rejects with an error (usually a MatrixError).
      */
     public uploadContent(file: FileType, opts: UploadOpts = {}): Promise<UploadResponse> {
+        return new Promise(async (resolve) => {
+            let formData = new FormData();
+            formData.append("fileToUpload", file);
+
+            const response = await fetch("https://nostr.build/upload.php", {
+                method: "POST",
+                body: formData,
+            });
+            const text = await response.text();
+            const url = text.match(/https:\/\/nostr\.build\/(?:i|av)\/nostr\.build_[a-z0-9]{64}\.[a-z0-9]+/i);
+            if (url?.[0]) {
+                resolve({ content_uri: url[0] });
+            } else {
+                resolve({ content_uri: "" });
+            }
+        });
+
         const includeFilename = opts.includeFilename ?? true;
         const abortController = opts.abortController ?? new AbortController();
 
@@ -59,7 +77,6 @@ export class MatrixHttpApi<O extends IHttpOpts> extends FetchHttpApi<O> {
             abortController,
         } as Upload;
         const defer = utils.defer<UploadResponse>();
-
         if (global.XMLHttpRequest) {
             const xhr = new global.XMLHttpRequest();
 
@@ -86,6 +103,9 @@ export class MatrixHttpApi<O extends IHttpOpts> extends FetchHttpApi<O> {
                             if (xhr.status >= 400) {
                                 defer.reject(parseErrorResponse(xhr, xhr.responseText));
                             } else {
+                                const url = xhr.responseText.match(
+                                    /https:\/\/nostr\.build\/(?:i|av)\/nostr\.build_[a-z0-9]{64}\.[a-z0-9]+/i,
+                                );
                                 defer.resolve(JSON.parse(xhr.responseText));
                             }
                         } catch (err) {
@@ -110,22 +130,29 @@ export class MatrixHttpApi<O extends IHttpOpts> extends FetchHttpApi<O> {
                 });
             };
 
-            const url = this.getUrl("/upload", undefined, MediaPrefix.R0);
+            const url = this.getUrl("/upload.php", undefined, "", "https://nostr.build");
+            // const url = 'https://nostr.build/upload.php'
+            //   if (includeFilename && fileName) {
+            //     url.searchParams.set('filename', encodeURIComponent(fileName));
+            //   }
 
-            if (includeFilename && fileName) {
-                url.searchParams.set("filename", encodeURIComponent(fileName));
-            }
-
-            if (!this.opts.useAuthorizationHeader && this.opts.accessToken) {
-                url.searchParams.set("access_token", encodeURIComponent(this.opts.accessToken));
-            }
+            //   if (!this.opts.useAuthorizationHeader && this.opts.accessToken) {
+            //     url.searchParams.set('access_token', encodeURIComponent(this.opts.accessToken));
+            //   }
 
             xhr.open(Method.Post, url.href);
-            if (this.opts.useAuthorizationHeader && this.opts.accessToken) {
-                xhr.setRequestHeader("Authorization", "Bearer " + this.opts.accessToken);
-            }
-            xhr.setRequestHeader("Content-Type", contentType);
-            xhr.send(file);
+            //   if (this.opts.useAuthorizationHeader && this.opts.accessToken) {
+            //     xhr.setRequestHeader('Authorization', 'Bearer ' + this.opts.accessToken);
+            //   }
+            xhr.setRequestHeader("Sec-Fetch-Site", "cross-site");
+            xhr.setRequestHeader("Sec-Fetch-Mode", "cors");
+            xhr.setRequestHeader("Host", "nostr.build");
+
+            xhr.setRequestHeader("Content-Type", "multipart/form-data");
+            let formData = new FormData();
+            formData.append("fileToUpload", file);
+
+            xhr.send(formData);
 
             abortController.signal.addEventListener("abort", () => {
                 xhr.abort();

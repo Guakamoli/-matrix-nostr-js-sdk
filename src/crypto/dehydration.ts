@@ -128,6 +128,8 @@ export class DehydrationManager {
 
     /** returns the device id of the newly created dehydrated device */
     public async dehydrateDevice(): Promise<string | undefined> {
+        // change by nostr
+        return Promise.resolve(undefined);
         if (this.inProgress) {
             logger.log("Dehydration already in progress -- not starting new dehydration");
             return;

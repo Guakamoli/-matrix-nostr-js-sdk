@@ -768,3 +768,24 @@ export class MapWithDefault<K, V> extends Map<K, V> {
         return this.get(key)!;
     }
 }
+
+export const now = () => Math.round(new Date().valueOf() / 1000);
+
+export const timedelta = (n: number, unit = "seconds") => {
+    switch (unit) {
+        case "seconds":
+        case "second":
+            return n;
+        case "minutes":
+        case "minute":
+            return n * 60;
+        case "hours":
+        case "hour":
+            return n * 60 * 60;
+        case "days":
+        case "day":
+            return n * 60 * 60 * 24;
+        default:
+            throw new Error(`Invalid unit ${unit}`);
+    }
+};

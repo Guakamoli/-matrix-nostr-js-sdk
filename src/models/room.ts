@@ -929,6 +929,8 @@ export class Room extends ReadReceipt<RoomEmittedEvents, RoomEventHandlerMap> {
      * all members in the room into account
      */
     public loadMembersIfNeeded(): Promise<boolean> {
+        // chaneg by nostr
+        return Promise.resolve(false);
         if (this.membersPromise) {
             return this.membersPromise;
         }
@@ -2119,7 +2121,9 @@ export class Room extends ReadReceipt<RoomEmittedEvents, RoomEventHandlerMap> {
                     roomState: this.currentState,
                 });
             } else {
-                timelineSet.addEventToTimeline(thread.rootEvent, timelineSet.getLiveTimeline(), { toStartOfTimeline });
+                timelineSet.addEventToTimeline(thread.rootEvent, timelineSet.getLiveTimeline(), {
+                    toStartOfTimeline,
+                });
             }
         }
     };

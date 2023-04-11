@@ -67,7 +67,7 @@ export interface IResultRoomEvents {
             };
         };
     };
-    next_batch?: string;
+    next_batch?: number;
 }
 
 interface IResultCategories {

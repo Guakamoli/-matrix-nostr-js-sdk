@@ -41,6 +41,9 @@ export function getHttpUriForMxc(
     if (typeof mxc !== "string" || !mxc) {
         return "";
     }
+    if (mxc.startsWith("https")) {
+        return mxc;
+    }
     if (mxc.indexOf("mxc://") !== 0) {
         if (allowDirectLinks) {
             return mxc;

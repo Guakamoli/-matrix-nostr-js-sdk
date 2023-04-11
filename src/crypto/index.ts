@@ -217,6 +217,14 @@ export interface IOlmEncryptedContent {
     [ToDeviceMessageId]?: string;
 }
 
+/* eslint-disable camelcase */
+export interface SECP256K1EncryptedContent {
+    algorithm: typeof olmlib.SECP256K1;
+    sender_key: string;
+    ciphertext: Record<string, IMessage>;
+    [ToDeviceMessageId]?: string;
+}
+
 export interface IMegolmEncryptedContent {
     algorithm: typeof olmlib.MEGOLM_ALGORITHM;
     sender_key: string;
@@ -227,7 +235,7 @@ export interface IMegolmEncryptedContent {
 }
 /* eslint-enable camelcase */
 
-export type IEncryptedContent = IOlmEncryptedContent | IMegolmEncryptedContent;
+export type IEncryptedContent = IOlmEncryptedContent | IMegolmEncryptedContent | SECP256K1EncryptedContent;
 
 export enum CryptoEvent {
     DeviceVerificationChanged = "deviceVerificationChanged",
@@ -1844,6 +1852,8 @@ export class Crypto extends TypedEventEmitter<CryptoEvent, CryptoEventHandlerMap
 
     // check if it's time to upload one-time keys, and do so if so.
     private maybeUploadOneTimeKeys(): void {
+        // change by nostr
+        return;
         // frequency with which to check & upload one-time keys
         const uploadPeriod = 1000 * 60; // one minute
 
@@ -2819,6 +2829,7 @@ export class Crypto extends TypedEventEmitter<CryptoEvent, CryptoEventHandlerMap
         const roomId = event.getRoomId()!;
 
         const alg = this.roomEncryptors.get(roomId);
+
         if (!alg) {
             // MatrixClient has already checked that this room should be encrypted,
             // so this is an unexpected situation.
@@ -2832,7 +2843,7 @@ export class Crypto extends TypedEventEmitter<CryptoEvent, CryptoEventHandlerMap
         }
 
         // wait for all the room devices to be loaded
-        await this.trackRoomDevicesImpl(room);
+        // await this.trackRoomDevicesImpl(room);
 
         let content = event.getContent();
         // If event has an m.relates_to then we need
@@ -2850,7 +2861,6 @@ export class Crypto extends TypedEventEmitter<CryptoEvent, CryptoEventHandlerMap
             content = Object.assign({}, content);
             delete content["io.element.performance_metrics"];
         }
-
         const encryptedContent = (await alg.encryptMessage(room, event.getType(), content)) as IContent;
 
         if (mRelatesTo) {
@@ -2907,6 +2917,7 @@ export class Crypto extends TypedEventEmitter<CryptoEvent, CryptoEventHandlerMap
             };
         } else {
             const content = event.getWireContent();
+
             const alg = this.getRoomDecryptor(event.getRoomId()!, content.algorithm);
             return alg.decryptEvent(event);
         }

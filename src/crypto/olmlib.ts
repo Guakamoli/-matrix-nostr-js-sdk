@@ -36,6 +36,7 @@ enum Algorithm {
     Olm = "m.olm.v1.curve25519-aes-sha2",
     Megolm = "m.megolm.v1.aes-sha2",
     MegolmBackup = "m.megolm_backup.v1.curve25519-aes-sha2",
+    Secp256k1 = "m.secp256k1-ecdh",
 }
 
 /**
@@ -52,6 +53,11 @@ export const MEGOLM_ALGORITHM = Algorithm.Megolm;
  * matrix algorithm tag for megolm backups
  */
 export const MEGOLM_BACKUP_ALGORITHM = Algorithm.MegolmBackup;
+
+/**
+ * matrix algorithm tag for Secp256k1
+ */
+export const SECP256K1 = Algorithm.Secp256k1;
 
 export interface IOlmSessionResult {
     /** device info */

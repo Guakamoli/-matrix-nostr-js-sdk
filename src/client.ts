@@ -19,6 +19,7 @@ limitations under the License.
  */
 
 import { Optional } from "matrix-events-sdk";
+import { getEventHash, Event } from "nostr-tools";
 
 import type { IDeviceKeys, IMegolmSessionData, IOneTimeKey } from "./@types/crypto";
 import { ISyncStateData, SyncApi, SyncApiOptions, SyncState } from "./sync";
@@ -208,6 +209,10 @@ import { CryptoBackend } from "./common-crypto/CryptoBackend";
 import { RUST_SDK_STORE_PREFIX } from "./rust-crypto/constants";
 import { CryptoApi } from "./crypto-api";
 import { DeviceInfoMap } from "./crypto/DeviceList";
+
+import Relays, { NostrRelay } from "./nostr/src/Relays";
+import NostrClient from "./nostr/src/client";
+import Key from "./nostr/src/Key";
 
 export type Store = IStore;
 
@@ -1201,7 +1206,9 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
     protected canSupportVoip = false;
     protected peekSync: SyncApi | null = null;
     protected isGuestAccount = false;
-    protected ongoingScrollbacks: { [roomId: string]: { promise?: Promise<Room>; errorTs?: number } } = {};
+    protected ongoingScrollbacks: {
+        [roomId: string]: { promise?: Promise<Room>; errorTs?: number };
+    } = {};
     protected notifTimelineSet: EventTimelineSet | null = null;
     protected cryptoStore?: CryptoStore;
     protected verificationMethods?: VerificationMethod[];
@@ -1245,7 +1252,8 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
 
     // A manager for determining which invites should be ignored.
     public readonly ignoredInvites: IgnoredInvites;
-
+    public relays: Relays;
+    public nostrClient: NostrClient;
     public constructor(opts: IMatrixClientCreateOpts) {
         super();
 
@@ -1406,8 +1414,14 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
                 room.setUnreadNotificationCount(NotificationCountType.Highlight, highlightCount);
             }
         });
-
+        this.nostrClient = new NostrClient(this);
+        // this.relays = new Relays(this);
         this.ignoredInvites = new IgnoredInvites(this);
+
+        Key.login({
+            priv: this.getAccessToken(),
+            rpub: this.getUserId(),
+        });
     }
 
     /**
@@ -1418,6 +1432,8 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
      * @param opts - Options to apply when syncing.
      */
     public async startClient(opts?: IStartClientOpts): Promise<void> {
+        this.nostrClient.init();
+
         if (this.clientRunning) {
             // client is already running.
             return;
@@ -1434,7 +1450,10 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
         // so it's always available, even if the user is not in any rooms etc.
         const userId = this.getUserId();
         if (userId) {
-            this.store.storeUser(new User(userId));
+            const user = this.getUser(userId);
+            if (!user) {
+                this.store.storeUser(new User(userId));
+            }
         }
 
         // periodically poll for turn servers if we support voip
@@ -1452,19 +1471,21 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
             this.syncApi.stop();
         }
 
-        try {
-            await this.getVersions();
+        // try {
+        //   await this.getVersions();
 
-            // This should be done with `canSupport`
-            // TODO: https://github.com/vector-im/element-web/issues/23643
-            const { threads, list, fwdPagination } = await this.doesServerSupportThread();
-            Thread.setServerSideSupport(threads);
-            Thread.setServerSideListSupport(list);
-            Thread.setServerSideFwdPaginationSupport(fwdPagination);
-        } catch (e) {
-            logger.error("Can't fetch server versions, continuing to initialise sync, this will be retried later", e);
-        }
-
+        //   // This should be done with `canSupport`
+        //   // TODO: https://github.com/vector-im/element-web/issues/23643
+        //   const { threads, list, fwdPagination } = await this.doesServerSupportThread();
+        //   Thread.setServerSideSupport(threads);
+        //   Thread.setServerSideListSupport(list);
+        //   Thread.setServerSideFwdPaginationSupport(fwdPagination);
+        // } catch (e) {
+        //   logger.error(
+        //     "Can't fetch server versions, continuing to initialise sync, this will be retried later",
+        //     e
+        //   );
+        // }
         this.clientOpts = opts ?? {};
         if (this.clientOpts.slidingSync) {
             this.syncApi = new SlidingSyncSdk(
@@ -3195,6 +3216,8 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
      */
     public async getKeyBackupVersion(): Promise<IKeyBackupInfo | null> {
         let res: IKeyBackupInfo;
+        // change by nostr
+        return Promise.resolve(res);
         try {
             res = await this.http.authedRequest<IKeyBackupInfo>(
                 Method.Get,
@@ -3378,7 +3401,9 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
             $version: version,
         });
 
-        await this.http.authedRequest(Method.Delete, path, undefined, undefined, { prefix: ClientPrefix.V3 });
+        await this.http.authedRequest(Method.Delete, path, undefined, undefined, {
+            prefix: ClientPrefix.V3,
+        });
     }
 
     private makeKeyBackupPath(roomId: undefined, sessionId: undefined, version?: string): IKeyBackupPath;
@@ -3440,7 +3465,9 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
         }
 
         const path = this.makeKeyBackupPath(roomId!, sessionId!, version);
-        await this.http.authedRequest(Method.Put, path.path, path.queryData, data, { prefix: ClientPrefix.V3 });
+        await this.http.authedRequest(Method.Put, path.path, path.queryData, data, {
+            prefix: ClientPrefix.V3,
+        });
     }
 
     /**
@@ -3798,7 +3825,9 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
         }
 
         const path = this.makeKeyBackupPath(roomId!, sessionId!, version);
-        await this.http.authedRequest(Method.Delete, path.path, path.queryData, undefined, { prefix: ClientPrefix.V3 });
+        await this.http.authedRequest(Method.Delete, path.path, path.queryData, undefined, {
+            prefix: ClientPrefix.V3,
+        });
     }
 
     /**
@@ -4035,49 +4064,57 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
      * @returns Rejects: with an error response.
      */
     public async joinRoom(roomIdOrAlias: string, opts: IJoinRoomOpts = {}): Promise<Room> {
-        if (opts.syncRoom === undefined) {
-            opts.syncRoom = true;
-        }
+        // if (opts.syncRoom === undefined) {
+        //   opts.syncRoom = true;
+        // }
 
-        const room = this.getRoom(roomIdOrAlias);
-        if (room?.hasMembershipState(this.credentials.userId!, "join")) {
-            return Promise.resolve(room);
-        }
+        // const room = this.getRoom(roomIdOrAlias);
+        // if (room?.hasMembershipState(this.credentials.userId!, 'join')) {
+        //   return Promise.resolve(room);
+        // }
 
-        let signPromise: Promise<IThirdPartySigned | void> = Promise.resolve();
+        // let signPromise: Promise<IThirdPartySigned | void> = Promise.resolve();
 
-        if (opts.inviteSignUrl) {
-            const url = new URL(opts.inviteSignUrl);
-            url.searchParams.set("mxid", this.credentials.userId!);
-            signPromise = this.http.requestOtherUrl<IThirdPartySigned>(Method.Post, url);
-        }
+        // if (opts.inviteSignUrl) {
+        //   const url = new URL(opts.inviteSignUrl);
+        //   url.searchParams.set('mxid', this.credentials.userId!);
+        //   signPromise = this.http.requestOtherUrl<IThirdPartySigned>(Method.Post, url);
+        // }
 
-        const queryString: Record<string, string | string[]> = {};
-        if (opts.viaServers) {
-            queryString["server_name"] = opts.viaServers;
-        }
+        // const queryString: Record<string, string | string[]> = {};
+        // if (opts.viaServers) {
+        //   queryString['server_name'] = opts.viaServers;
+        // }
 
-        try {
-            const data: IJoinRequestBody = {};
-            const signedInviteObj = await signPromise;
-            if (signedInviteObj) {
-                data.third_party_signed = signedInviteObj;
-            }
+        // try {
+        //   const data: IJoinRequestBody = {};
+        //   const signedInviteObj = await signPromise;
+        //   if (signedInviteObj) {
+        //     data.third_party_signed = signedInviteObj;
+        //   }
 
-            const path = utils.encodeUri("/join/$roomid", { $roomid: roomIdOrAlias });
-            const res = await this.http.authedRequest<{ room_id: string }>(Method.Post, path, queryString, data);
+        //   const path = utils.encodeUri('/join/$roomid', { $roomid: roomIdOrAlias });
+        //   const res = await this.http.authedRequest<{ room_id: string }>(
+        //     Method.Post,
+        //     path,
+        //     queryString,
+        //     data
+        //   );
 
-            const roomId = res.room_id;
-            const syncApi = new SyncApi(this, this.clientOpts, this.buildSyncApiOptions());
-            const room = syncApi.createRoom(roomId);
-            if (opts.syncRoom) {
-                // v2 will do this for us
-                // return syncApi.syncRoom(room);
-            }
-            return room;
-        } catch (e) {
-            throw e; // rethrow for reject
-        }
+        //   const roomId = res.room_id;
+        //   const syncApi = new SyncApi(this, this.clientOpts, this.buildSyncApiOptions());
+        //   const room = syncApi.createRoom(roomId);
+        //   if (opts.syncRoom) {
+        //     // v2 will do this for us
+        //     // return syncApi.syncRoom(room);
+        //   }
+        //   return room;
+        // } catch (e) {
+        //   throw e; // rethrow for reject
+        // }
+
+        this.nostrClient.joinRoom(roomIdOrAlias);
+        return { roomId: roomIdOrAlias };
     }
 
     /**
@@ -4121,12 +4158,20 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
         this.updatePendingEventStatus(room, event, EventStatus.CANCELLED);
     }
 
+    public setRoomProfile(roomId: string, metadata: { name: string; about: string; picture: string }) {
+        const { topic } = ContentHelpers.makeTopicContent(metadata.about);
+        return this.publishPublicSetMetadata(roomId, {
+            ...metadata,
+            about: topic,
+        });
+    }
+
     /**
      * @returns Promise which resolves: TODO
      * @returns Rejects: with an error response.
      */
     public setRoomName(roomId: string, name: string): Promise<ISendEventResponse> {
-        return this.sendStateEvent(roomId, EventType.RoomName, { name: name });
+        return this.sendStateEvent(roomId, EventType.RoomName, { name });
     }
 
     /**
@@ -4335,6 +4380,7 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
         const localEvent = new MatrixEvent(
             Object.assign(eventObject, {
                 event_id: "~" + roomId + ":" + txnId,
+
                 user_id: this.credentials.userId,
                 sender: this.credentials.userId,
                 room_id: roomId,
@@ -4496,7 +4542,6 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
         if (!this.cryptoBackend) {
             throw new Error("This room is configured to use encryption, but your client does not support encryption.");
         }
-
         return this.cryptoBackend.encryptEvent(event, room);
     }
 
@@ -4530,6 +4575,9 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
             event.setTxnId(txnId);
         }
 
+        return this.nostrClient.sendMessage(event) as unknown as Promise<ISendEventResponse>;
+
+        // return Promise.resolve({ event_id: event.getId() });
         const pathParams = {
             $roomId: event.getRoomId()!,
             $eventType: event.getWireType(),
@@ -4658,7 +4706,6 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
 
         const eventType: string = EventType.RoomMessage;
         const sendContent: IContent = content as IContent;
-
         return this.sendEvent(roomId, threadId as string | null, eventType, sendContent, txnId);
     }
 
@@ -4909,11 +4956,11 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
             return Promise.resolve({}); // guests cannot send receipts so don't bother.
         }
 
-        const path = utils.encodeUri("/rooms/$roomId/receipt/$receiptType/$eventId", {
-            $roomId: event.getRoomId()!,
-            $receiptType: receiptType,
-            $eventId: event.getId()!,
-        });
+        // const path = utils.encodeUri('/rooms/$roomId/receipt/$receiptType/$eventId', {
+        //   $roomId: event.getRoomId()!,
+        //   $receiptType: receiptType,
+        //   $eventId: event.getId()!,
+        // });
 
         if (!unthreaded) {
             const isThread = !!event.threadRootId;
@@ -4923,13 +4970,13 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
             };
         }
 
-        const promise = this.http.authedRequest<{}>(Method.Post, path, undefined, body || {});
+        // const promise = this.http.authedRequest<{}>(Method.Post, path, undefined, body || {});
 
         const room = this.getRoom(event.getRoomId());
         if (room && this.credentials.userId) {
             room.addLocalEchoReceipt(this.credentials.userId, event, receiptType);
         }
-        return promise;
+        return Promise.resolve({});
     }
 
     /**
@@ -5344,14 +5391,22 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
         reason?: string,
     ): Promise<{}> {
         // API returns an empty object
-        const path = utils.encodeUri("/rooms/$room_id/$membership", {
-            $room_id: roomId,
-            $membership: membership,
-        });
-        return this.http.authedRequest(Method.Post, path, undefined, {
-            user_id: userId, // may be undefined e.g. on leave
-            reason: reason,
-        });
+        // const path = utils.encodeUri('/rooms/$room_id/$membership', {
+        //   $room_id: roomId,
+        //   $membership: membership,
+        // });
+        // return this.http.authedRequest(Method.Post, path, undefined, {
+        //   user_id: userId, // may be undefined e.g. on leave
+        //   reason: reason,
+        // });
+
+        this.store.getRoom(roomId).updateMyMembership(membership);
+
+        if (membership === "leave") {
+            this.nostrClient.leaveRoom(roomId);
+        } else if (membership === "join") {
+            this.nostrClient.joinRoom(roomId);
+        }
     }
 
     /**
@@ -5379,6 +5434,9 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
     public setProfileInfo(info: "avatar_url", data: { avatar_url: string }): Promise<{}>;
     public setProfileInfo(info: "displayname", data: { displayname: string }): Promise<{}>;
     public setProfileInfo(info: "avatar_url" | "displayname", data: object): Promise<{}> {
+        // change by nostr
+        this.nostrClient.setUserMetaData(data);
+        return Promise.resolve({});
         const path = utils.encodeUri("/profile/$userId/$info", {
             $userId: this.credentials.userId!,
             $info: info,
@@ -6921,6 +6979,14 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
      * @returns Rejects: with an error response.
      */
     public turnServer(): Promise<ITurnServerResponse> {
+        // change by nostr
+        const res = {
+            uris: [],
+            username: "",
+            password: "",
+            ttl: 0,
+        };
+        return Promise.resolve(res);
         return this.http.authedRequest(Method.Get, "/voip/turnServer");
     }
 
@@ -7021,7 +7087,9 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
      * @returns true if the user appears to be a Synapse administrator.
      */
     public isSynapseAdministrator(): Promise<boolean> {
-        const path = utils.encodeUri("/_synapse/admin/v1/users/$userId/admin", { $userId: this.getUserId()! });
+        const path = utils.encodeUri("/_synapse/admin/v1/users/$userId/admin", {
+            $userId: this.getUserId()!,
+        });
         return this.http
             .authedRequest<{ admin: boolean }>(Method.Get, path, undefined, undefined, { prefix: "" })
             .then((r) => r.admin); // pull out the specific boolean we want
@@ -7122,6 +7190,12 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
      * @returns The server /versions response
      */
     public async getVersions(): Promise<IServerVersions> {
+        // change by nostr
+        const res = {
+            versions: [],
+            unstable_features: [],
+        } as unknown as IServerVersions;
+        return Promise.resolve(res);
         if (this.serverVersionsPromise) {
             return this.serverVersionsPromise;
         }
@@ -7852,21 +7926,36 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
         // some valid options include: room_alias_name, visibility, invite
 
         // inject the id_access_token if inviting 3rd party addresses
-        const invitesNeedingToken = (options.invite_3pid || []).filter((i) => !i.id_access_token);
-        if (
-            invitesNeedingToken.length > 0 &&
-            this.identityServer?.getAccessToken &&
-            (await this.doesServerAcceptIdentityAccessToken())
-        ) {
-            const identityAccessToken = await this.identityServer.getAccessToken();
-            if (identityAccessToken) {
-                for (const invite of invitesNeedingToken) {
-                    invite.id_access_token = identityAccessToken;
-                }
-            }
+        // const invitesNeedingToken = (options.invite_3pid || []).filter((i) => !i.id_access_token);
+        // if (
+        //   invitesNeedingToken.length > 0 &&
+        //   this.identityServer?.getAccessToken &&
+        //   (await this.doesServerAcceptIdentityAccessToken())
+        // ) {
+        //   const identityAccessToken = await this.identityServer.getAccessToken();
+        //   if (identityAccessToken) {
+        //     for (const invite of invitesNeedingToken) {
+        //       invite.id_access_token = identityAccessToken;
+        //     }
+        //   }
+        // }
+
+        // return this.http.authedRequest(Method.Post, '/createRoom', undefined, options);
+
+        // change by nostr
+        let roomId: string | undefined;
+        if (options.is_direct) {
+            const event = await this.publishPublicCreateMessage({
+                ...options,
+                name: options.name,
+                about: options.topic || "",
+            });
+            roomId = event.id;
+        } else {
+            roomId = options.name;
         }
 
-        return this.http.authedRequest(Method.Post, "/createRoom", undefined, options);
+        return { room_id: roomId };
     }
 
     /**
@@ -8110,11 +8199,60 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
         ...options
     }: IRoomDirectoryOptions = {}): Promise<IPublicRoomsResponse> {
         const queryParams: QueryDict = { server, limit, since };
-        if (Object.keys(options).length === 0) {
-            return this.http.authedRequest(Method.Get, "/publicRooms", queryParams);
-        } else {
-            return this.http.authedRequest(Method.Post, "/publicRooms", queryParams, options);
+        // if (Object.keys(options).length === 0) {
+        //   return this.http.authedRequest(Method.Get, '/publicRooms', queryParams);
+        // } else {
+        //   return this.http.authedRequest(Method.Post, '/publicRooms', queryParams, options);
+        // }
+
+        // change by nostr
+        /**
+      chunk: [{
+        avatar_url: "mxc://matrix.org/JgaleHCClKIWQnguAMEvSGZl"
+        canonical_alias: "#hello:matrix.org"
+        guest_can_join: true
+        join_rule: "public"
+        name: "hello world"
+        num_joined_members: 999
+        room_id: "!abcdefg:matrix.org"
+        topic: "example"
+        world_readable: true
+      }]
+      next_batch: "abc"
+      total_room_count_estimate: 999
+     */
+        const search = options.filter.generic_search_term;
+        const start = !!since ? Number(since) : 0;
+        const end = start + limit;
+
+        const batch: any = {
+            next_batch: end + 1,
+        };
+        this.nostrClient.totalRoomCount / end;
+        if (start !== 0) {
+            batch.prev_batch = 0;
         }
+
+        // this.nostrClient.getPublicRooms()
+        const chunk: IPublicRoomsChunkRoom[] = this.nostrClient.getPublicRooms(search);
+        // const rooms = this.getRooms();
+        // for (const room of rooms) {
+        //   chunk.push({
+        //     room_id: room.roomId,
+        //     name: room.name,
+        //     avatar_url: room.getAvatarUrl(window.location.href, 100, 100, 'scale'),
+        //     topic: '',
+        //     canonical_alias: room.roomId,
+        //     world_readable: true,
+        //     guest_can_join: true,
+        //     num_joined_members: 1,
+        //   });
+        // }
+
+        return {
+            chunk,
+            total_room_count_estimate: chunk.length,
+        };
     }
 
     /**
@@ -8306,10 +8444,12 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
         info?: string,
         // eslint-disable-next-line camelcase
     ): Promise<{ avatar_url?: string; displayname?: string }> {
-        const path = info
-            ? utils.encodeUri("/profile/$userId/$info", { $userId: userId, $info: info })
-            : utils.encodeUri("/profile/$userId", { $userId: userId });
-        return this.http.authedRequest(Method.Get, path);
+        // change by nostr
+        return this.nostrClient.fetchUserMetadata(userId);
+        // const path = info
+        //   ? utils.encodeUri('/profile/$userId/$info', { $userId: userId, $info: info })
+        //   : utils.encodeUri('/profile/$userId', { $userId: userId });
+        // return this.http.authedRequest(Method.Get, path);
     }
 
     /**
@@ -8445,6 +8585,7 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
      * @returns Rejects: with an error response.
      */
     public getDevices(): Promise<{ devices: IMyDevice[] }> {
+        return Promise.resolve({ devices: [] });
         return this.http.authedRequest(Method.Get, "/devices");
     }
 
@@ -8666,14 +8807,71 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
      * @returns Rejects: with an error response.
      */
     public search(
-        { body, next_batch: nextBatch }: { body: ISearchRequestBody; next_batch?: string },
+        { body, next_batch: nextBatch }: { body: ISearchRequestBody; next_batch?: number },
         abortSignal?: AbortSignal,
     ): Promise<ISearchResponse> {
-        const queryParams: any = {};
-        if (nextBatch) {
-            queryParams.next_batch = nextBatch;
+        // change by nostr
+        const res: ISearchResponse = {
+            search_categories: {
+                room_events: {
+                    count: 0,
+                    results: [
+                        {
+                            context: {
+                                events_after: [],
+                                events_before: [],
+                                profile_info: {},
+                            },
+                            rank: 1,
+                            result: null,
+                        },
+                    ],
+                    highlights: [],
+                    next_batch: 0,
+                },
+            },
+        };
+        const room = this.getRoom(body.search_categories.room_events.filter.rooms[0]);
+        const timeline = room.getLiveTimeline();
+        const term = body.search_categories.room_events.search_term;
+        const limit = body.search_categories.room_events.filter.limit || 10;
+        nextBatch = nextBatch || 0;
+        res.search_categories.room_events.results = timeline
+            .getEvents()
+            .filter((i) => {
+                return i.getType() === EventType.RoomMessage && i.getContent()?.body?.includes?.(`${term}`);
+            })
+            .map((i) => {
+                const result = i.toJSON();
+                return {
+                    context: {
+                        events_after: [],
+                        events_before: [],
+                        profile_info: {},
+                    },
+                    rank: 1,
+                    result: result.decrypted ?? result,
+                };
+            });
+        res.search_categories.room_events.count = res.search_categories.room_events.results.length;
+        res.search_categories.room_events.results = res.search_categories.room_events.results.slice(
+            nextBatch * limit,
+            limit + nextBatch * limit,
+        );
+        res.search_categories.room_events.next_batch = nextBatch + 1;
+
+        if (
+            !res.search_categories.room_events.results.length ||
+            limit + nextBatch * limit >= res.search_categories.room_events.count
+        ) {
+            res.search_categories.room_events.next_batch = null;
         }
-        return this.http.authedRequest(Method.Post, "/search", queryParams, body, { abortSignal });
+
+        // 获取当前的房间信息
+        return Promise.resolve(res);
+        // 这里改为搜索本地的数据库, 本地有就有 没有就没有
+
+        // return this.http.authedRequest(Method.Post, '/search', queryParams, body, { abortSignal });
     }
 
     /**
@@ -8688,6 +8886,11 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
      *     an error response ({@link MatrixError}).
      */
     public uploadKeysRequest(content: IUploadKeysRequest, opts?: void): Promise<IKeysUploadResponse> {
+        // change by nostr
+        const res = {
+            one_time_key_counts: [],
+        } as unknown as IKeysUploadResponse;
+        return Promise.resolve(res);
         return this.http.authedRequest(Method.Post, "/keys/upload", undefined, content);
     }
 
@@ -8709,6 +8912,12 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
      *     an error response ({@link MatrixError}).
      */
     public downloadKeysForUsers(userIds: string[], { token }: { token?: string } = {}): Promise<IDownloadKeyResult> {
+        // change by nostr
+        const res = {
+            failures: [],
+            device_keys: [],
+        } as unknown as IDownloadKeyResult;
+        return Promise.resolve(res);
         const content: IQueryKeysRequest = {
             device_keys: {},
         };
@@ -9594,6 +9803,100 @@ export class MatrixClient extends TypedEventEmitter<EmittedEvents, ClientEventHa
 
             throw err;
         }
+    }
+
+    /**
+     * Get the buffer data of nostr event
+     *
+     * @returns MXID for the logged-in user, or null if not logged in
+     */
+    public getUserName(userId: string): string {
+        return this.store.getUser(userId)?.displayName ?? "";
+    }
+    /**
+     * Get the buffer data of nostr event
+     *
+     * @returns MXID for the logged-in user, or null if not logged in
+     */
+    public getUserAvatar(userId: string): string {
+        return this.store.getUser(userId)?.avatarUrl || null;
+    }
+    /**
+     * Get the buffer data of nostr event
+     *
+     * @returns MXID for the logged-in user, or null if not logged in
+     */
+    public getBufferEvent(): string | null {
+        return this.nostrClient.getBufferEvent();
+    }
+
+    public getRelays() {
+        const relays = [...this.nostrClient.relay.relays.entries()];
+        return relays.map(([_, relay]: [string, NostrRelay]) => relay);
+    }
+
+    public addRelay(url: string) {
+        const relayInstance = this.nostrClient.relay;
+        if (!relayInstance.relays.has(url)) {
+            relayInstance.add(url);
+            const relay = relayInstance.relays.get(url);
+            relayInstance.resubscribe(relay);
+        }
+    }
+
+    public removeRelay(url: string) {
+        this.nostrClient.relay.remove(url);
+    }
+
+    public async toggleRelay(relay: NostrRelay) {
+        const enabled = relay.status === 1;
+        if (enabled) {
+            relay.close();
+        } else {
+            await relay.connect();
+            this.nostrClient.relay.resubscribe(relay);
+        }
+        relay.enabled = !enabled;
+    }
+
+    public saveRelays() {
+        this.nostrClient.relay.saveToLocalStorage();
+    }
+
+    public restoreDefaultRelays() {
+        this.nostrClient.relay.restoreDefaults();
+    }
+
+    public async publishPublicCreateMessage(metadata: {
+        name: string;
+        about: string;
+        picture: string;
+        isDM?: boolean;
+    }) {
+        return this.nostrClient.createRoom(metadata);
+    }
+
+    public async publishPublicSetMetadata(roomId: string, metadata: { name: string; about: string; picture: string }) {
+        return this.nostrClient.updateRoomMetaData(roomId, metadata);
+    }
+
+    public initGlobalSubscribe() {
+        this.nostrClient.initGlobalSubscribe();
+    }
+
+    public subscribePublicRooms() {
+        this.nostrClient.subscribePublicRooms();
+    }
+
+    public unsubscribePublicRooms() {
+        this.nostrClient.unsubscribePublicRooms();
+    }
+
+    public hasLeaveRoom(roomId: string | undefined) {
+        if (!roomId) {
+            return;
+        }
+        return this.nostrClient.hasLeaveRoom(roomId);
     }
 }
 
